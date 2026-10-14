@@ -1,0 +1,228 @@
+type scalar.
+
+free pub: channel.
+
+const P: bitstring.
+
+fun ecmult(scalar, bitstring): bitstring.
+
+equation forall k: scalar, l: scalar;
+    ecmult(k, ecmult(l, P)) = ecmult(l, ecmult(k, P)).
+
+fun H(bitstring): bitstring.
+
+fun xor(bitstring, bitstring): bitstring.
+reduc forall x: bitstring, y: bitstring; xor_r(xor(x, y), y) = x.
+reduc forall x: bitstring, y: bitstring; xor_l(xor(x, y), x) = y.
+
+fun s2b(scalar): bitstring [data, typeConverter].
+
+fun FE(bitstring): bitstring.
+fun FEpub(bitstring): bitstring.
+
+fun senc(bitstring, bitstring): bitstring.
+reduc forall m: bitstring, k: bitstring; sdec(senc(m, k), k) = m.
+
+(* Public domain-separation tags *)
+free tag1: bitstring.
+free tag2: bitstring.
+free tag3: bitstring.
+free tagK: bitstring.
+
+free IDUi: bitstring [private].
+free PWUi: bitstring [private].
+free BIOUi: bitstring [private].
+free IDSj: bitstring [private].
+free a: bitstring [private].
+free Ppr: scalar [private].
+
+free SecretU: bitstring [private].
+free SecretS: bitstring [private].
+
+(* Security queries under sensor-node capture after session completion *)
+query attacker(IDUi).
+query attacker(PWUi).
+query attacker(BIOUi).
+query attacker(IDSj).
+query attacker(a).
+query attacker(Ppr).
+
+query attacker(SecretU).
+query attacker(SecretS).
+
+(* Protocol events *)
+event UserStart(bitstring, bitstring, bitstring).
+event GWNAcceptUser(bitstring, bitstring, bitstring).
+
+event GWNSendSensorFull(bitstring, bitstring, bitstring, bitstring, bitstring, bitstring).
+event SensorAcceptFull(bitstring, bitstring, bitstring, bitstring, bitstring, bitstring).
+
+event SensorReply(bitstring, bitstring, bitstring).
+event GWNAcceptSensorFull(bitstring, bitstring, bitstring).
+
+event GWNSendUserFull(bitstring, bitstring, bitstring, bitstring, bitstring, bitstring).
+event UserAcceptFull(bitstring, bitstring, bitstring, bitstring, bitstring, bitstring).
+
+event SensorKey(bitstring, bitstring, bitstring).
+event UserKey(bitstring, bitstring, bitstring).
+
+
+let UserAuth(Bi: bitstring, Ei: bitstring, Fi: bitstring,
+             theta: bitstring, Ppub: bitstring) =
+
+    let omegaP = FE(BIOUi) in
+    let bP = xor_r(Fi, H((IDUi, PWUi, omegaP))) in
+    let HIDiP = H((omegaP, IDUi, bP)) in
+    let HPWiP = H((bP, PWUi, omegaP)) in
+    let EiCheck = H((HIDiP, HPWiP, omegaP)) in
+
+    if EiCheck = Ei then
+
+    new N1: scalar;
+    new T1: bitstring;
+
+    let HiP = xor_l(Bi, H(HIDiP)) in
+    let M1 = ecmult(N1, P) in
+    let M2 = ecmult(N1, Ppub) in
+    let M3 = H((HiP, M1, M2, T1, Bi)) in
+
+    event UserStart(M1, M3, T1);
+
+    out(pub, (M1, M3, T1));
+
+    (* Final response from GWN without KCS *)
+    in(pub, (rRS: bitstring, rM12: bitstring, rM13: bitstring,
+             rT2: bitstring, rT3: bitstring, rT4: bitstring));
+
+    let M13Chk = H((tag3, M2, M3, rM12, rRS, rT2, rT3, rT4)) in
+
+    if M13Chk = rM13 then
+
+    event UserAcceptFull(rRS, rM12, rM13, rT2, rT3, rT4);
+
+    let M4u = xor_l(rM12, M2) in
+
+    let ZUSu = ecmult(N1, rRS) in
+
+    let SKu = H((tagK, ZUSu, M1, rRS, M3, M4u, rT2, rT3)) in
+
+    event UserKey(SKu, rRS, rT3);
+
+    out(pub, senc(SecretU, SKu)).
+
+
+let GWNAuth(Bi: bitstring, XSGj: bitstring) =
+
+    in(pub, (rM1: bitstring, rM3: bitstring, rT1: bitstring));
+
+    let M2g = ecmult(Ppr, rM1) in
+    let Hi = H((s2b(Ppr), a)) in
+    let M3Chk = H((Hi, rM1, M2g, rT1, Bi)) in
+
+    if M3Chk = rM3 then
+
+    event GWNAcceptUser(rM1, rM3, rT1);
+
+    new N2: scalar;
+    new T2: bitstring;
+
+    let M4 = ecmult(N2, P) in
+    let M5 = ecmult(N2, rM1) in
+    let M6 = xor(M4, H(XSGj)) in
+    let M7 = xor(M4, M5) in
+
+    let M8s = H((tag1, XSGj, rM1, rM3, M4, M5, T2)) in
+
+    event GWNSendSensorFull(rM1, rM3, M6, M7, M8s, T2);
+
+    out(pub, (rM1, rM3, M6, M7, M8s, T2));
+
+    (* Sensor response without KCS *)
+    in(pub, (rRS: bitstring, rM11: bitstring, rT3: bitstring));
+
+    let M11Chk = H((tag2, XSGj, rM1, rM3, M4, M5, rRS, T2, rT3)) in
+
+    if M11Chk = rM11 then
+
+    event GWNAcceptSensorFull(rRS, rM11, rT3);
+
+    new T4: bitstring;
+
+    let M12 = xor(M2g, M4) in
+
+    let M13s = H((tag3, M2g, rM3, M12, rRS, T2, rT3, T4)) in
+
+    event GWNSendUserFull(rRS, M12, M13s, T2, rT3, T4);
+
+    out(pub, (rRS, M12, M13s, T2, rT3, T4)).
+
+
+let SensorAuth(XSGj: bitstring) =
+
+    in(pub, (rM1: bitstring, rM3: bitstring, rM6: bitstring,
+             rM7: bitstring, rM8: bitstring, rT2: bitstring));
+
+    let M4s = xor_r(rM6, H(XSGj)) in
+    let M5s = xor_l(rM7, M4s) in
+
+    let M8Chk = H((tag1, XSGj, rM1, rM3, M4s, M5s, rT2)) in
+
+    if M8Chk = rM8 then
+
+    event SensorAcceptFull(rM1, rM3, rM6, rM7, rM8, rT2);
+
+    new N3: scalar;
+    new T3: bitstring;
+
+    let RS = ecmult(N3, P) in
+
+    let ZUSs = ecmult(N3, rM1) in
+
+    let SKs = H((tagK, ZUSs, rM1, RS, rM3, M4s, rT2, T3)) in
+
+    let M11s = H((tag2, XSGj, rM1, rM3, M4s, M5s, RS, rT2, T3)) in
+
+    event SensorReply(RS, M11s, T3);
+
+    event SensorKey(SKs, RS, T3);
+
+    out(pub, (RS, M11s, T3));
+
+    out(pub, senc(SecretS, SKs)).
+
+
+process
+
+    let Ppub = ecmult(Ppr, P) in
+
+    out(pub, P);
+    out(pub, Ppub);
+
+    let XSGj = H((IDSj, a)) in
+
+    new b: bitstring;
+
+    let omega = FE(BIOUi) in
+    let theta = FEpub(BIOUi) in
+
+    out(pub, theta);
+
+    let HIDi = H((omega, IDUi, b)) in
+    let HPWi = H((b, PWUi, omega)) in
+    let Hi = H((s2b(Ppr), a)) in
+
+    let Bi = xor(H(HIDi), Hi) in
+    let Ei = H((HIDi, HPWi, omega)) in
+    let Fi = xor(b, H((IDUi, PWUi, omega))) in
+
+    (
+        UserAuth(Bi, Ei, Fi, theta, Ppub)
+      | GWNAuth(Bi, XSGj)
+      | SensorAuth(XSGj)
+
+      (* Sensor-node capture after the protocol session *)
+      | (
+            phase 1;
+            out(pub, XSGj)
+        )
+    )

@@ -1,0 +1,321 @@
+(* ================================================================
+   E-LMFA-WSN (without KCS) under the Dolev-Yao attacker model
+   Purpose: secrecy, authentication, final-message integrity,
+            and User-Sensor session-key agreement.
+   The query set is aligned with LMFA_original_DY_aligned.pv.
+   ================================================================ *)
+
+type scalar.
+
+free pub: channel.
+const P: bitstring.
+
+(* Idealized ECC scalar multiplication. *)
+fun ecmult(scalar, bitstring): bitstring.
+equation forall k: scalar, l: scalar;
+    ecmult(k, ecmult(l, P)) = ecmult(l, ecmult(k, P)).
+
+(* Idealized cryptographic primitives. *)
+fun H(bitstring): bitstring.
+
+fun xor(bitstring, bitstring): bitstring.
+reduc forall x: bitstring, y: bitstring;
+    xor_r(xor(x, y), y) = x.
+reduc forall x: bitstring, y: bitstring;
+    xor_l(xor(x, y), x) = y.
+
+fun s2b(scalar): bitstring [data, typeConverter].
+
+(* The fuzzy extractor is abstracted symbolically. *)
+fun FE(bitstring): bitstring.
+fun FEpub(bitstring): bitstring.
+
+(* Secret-protection wrapper used only for secrecy queries. *)
+fun senc(bitstring, bitstring): bitstring.
+reduc forall m: bitstring, k: bitstring;
+    sdec(senc(m, k), k) = m.
+
+(* Public domain-separation tags. *)
+free tag1: bitstring.
+free tag2: bitstring.
+free tag3: bitstring.
+free tagK: bitstring.
+
+(* Long-term values and protected test secrets. *)
+free IDUi: bitstring [private].
+free PWUi: bitstring [private].
+free BIOUi: bitstring [private].
+free IDSj: bitstring [private].
+free a: bitstring [private].
+free Ppr: scalar [private].
+
+free SecretU: bitstring [private].
+free SecretS: bitstring [private].
+
+(* Optional reachability instrumentation. It is kept in the model for
+   model debugging, but the reachability queries are disabled by default. *)
+event Reach(bitstring).
+
+free reachUserStart: bitstring [private].
+free reachGWNAcceptUser: bitstring [private].
+free reachGWNSendSensor: bitstring [private].
+free reachSensorAccept: bitstring [private].
+free reachSensorReply: bitstring [private].
+free reachSensorKey: bitstring [private].
+free reachGWNAcceptSensor: bitstring [private].
+free reachGWNSendUser: bitstring [private].
+free reachUserAccept: bitstring [private].
+free reachUserKey: bitstring [private].
+
+(*
+query event(Reach(reachUserStart)).
+query event(Reach(reachGWNAcceptUser)).
+query event(Reach(reachGWNSendSensor)).
+query event(Reach(reachSensorAccept)).
+query event(Reach(reachSensorReply)).
+query event(Reach(reachSensorKey)).
+query event(Reach(reachGWNAcceptSensor)).
+query event(Reach(reachGWNSendUser)).
+query event(Reach(reachUserAccept)).
+query event(Reach(reachUserKey)).
+*)
+
+(* Protocol events. Event arguments bind the accepted data to the
+   corresponding protocol message or session context. *)
+event UserStart(bitstring, bitstring, bitstring).
+event GWNAcceptUser(bitstring, bitstring, bitstring).
+
+event GWNSendSensorFull(
+    bitstring, bitstring, bitstring, bitstring, bitstring, bitstring
+).
+event SensorAcceptFull(
+    bitstring, bitstring, bitstring, bitstring, bitstring, bitstring
+).
+
+event SensorReply(bitstring, bitstring, bitstring).
+event GWNAcceptSensorFull(bitstring, bitstring, bitstring).
+
+event GWNSendUserFull(
+    bitstring, bitstring, bitstring, bitstring, bitstring, bitstring
+).
+event UserAcceptFull(
+    bitstring, bitstring, bitstring, bitstring, bitstring, bitstring
+).
+
+event SensorKey(bitstring, bitstring, bitstring).
+event UserKey(bitstring, bitstring, bitstring).
+
+(* ----------------------------------------------------------------
+   Security queries: identical property classes are used in both the
+   original and enhanced Dolev-Yao models.
+   ---------------------------------------------------------------- *)
+
+(* Symbolic secrecy. *)
+query attacker(IDUi).
+query attacker(PWUi).
+query attacker(BIOUi).
+query attacker(IDSj).
+query attacker(a).
+query attacker(Ppr).
+query attacker(SecretU).
+query attacker(SecretS).
+
+(* User -> GWN authentication. *)
+query m1: bitstring, m3: bitstring, t1: bitstring;
+    event(GWNAcceptUser(m1, m3, t1))
+    ==> event(UserStart(m1, m3, t1)).
+
+(* GWN -> Sensor full-message authentication. *)
+query m1: bitstring, m3: bitstring, m6: bitstring,
+      m7: bitstring, m8: bitstring, t2: bitstring;
+    event(SensorAcceptFull(m1, m3, m6, m7, m8, t2))
+    ==> event(GWNSendSensorFull(m1, m3, m6, m7, m8, t2)).
+
+(* Sensor -> GWN response authentication. *)
+query resp: bitstring, auth: bitstring, t3: bitstring;
+    event(GWNAcceptSensorFull(resp, auth, t3))
+    ==> event(SensorReply(resp, auth, t3)).
+
+(* GWN -> User final-message authentication. *)
+query resp: bitstring, m12: bitstring, m13: bitstring,
+      t2: bitstring, t3: bitstring, t4: bitstring;
+    event(UserAcceptFull(resp, m12, m13, t2, t3, t4))
+    ==> event(GWNSendUserFull(resp, m12, m13, t2, t3, t4)).
+
+(* Representative form in the manuscript: UserKey ==> SensorKey. *)
+query sk: bitstring, resp: bitstring, t3: bitstring;
+    event(UserKey(sk, resp, t3))
+    ==> event(SensorKey(sk, resp, t3)).
+
+
+let UserAuth(
+    Bi: bitstring,
+    Ei: bitstring,
+    Fi: bitstring,
+    Ppub: bitstring
+) =
+    let omegaP = FE(BIOUi) in
+    let bP = xor_r(Fi, H((IDUi, PWUi, omegaP))) in
+    let HIDiP = H((omegaP, IDUi, bP)) in
+    let HPWiP = H((bP, PWUi, omegaP)) in
+    let EiCheck = H((HIDiP, HPWiP, omegaP)) in
+
+    if EiCheck = Ei then
+
+    new N1: scalar;
+    new T1: bitstring;
+
+    let HiP = xor_l(Bi, H(HIDiP)) in
+    let M1 = ecmult(N1, P) in
+    let M2 = ecmult(N1, Ppub) in
+    let M3 = H((HiP, M1, M2, T1, Bi)) in
+
+    event UserStart(M1, M3, T1);
+    event Reach(reachUserStart);
+    out(pub, (M1, M3, T1));
+
+    in(pub, (
+        rRS: bitstring,
+        rM12: bitstring,
+        rM13: bitstring,
+        rT2: bitstring,
+        rT3: bitstring,
+        rT4: bitstring
+    ));
+
+    let M13Chk = H((tag3, M2, M3, rM12, rRS, rT2, rT3, rT4)) in
+
+    if M13Chk = rM13 then
+
+    event UserAcceptFull(rRS, rM12, rM13, rT2, rT3, rT4);
+    event Reach(reachUserAccept);
+
+    let M4u = xor_l(rM12, M2) in
+    let ZUSu = ecmult(N1, rRS) in
+    let SKu = H((tagK, ZUSu, M1, rRS, M3, M4u, rT2, rT3)) in
+
+    event UserKey(SKu, rRS, rT3);
+    event Reach(reachUserKey);
+
+    out(pub, senc(SecretU, SKu)).
+
+
+let GWNAuth(
+    Bi: bitstring,
+    XSGj: bitstring
+) =
+    in(pub, (
+        rM1: bitstring,
+        rM3: bitstring,
+        rT1: bitstring
+    ));
+
+    let M2g = ecmult(Ppr, rM1) in
+    let Hi = H((s2b(Ppr), a)) in
+    let M3Chk = H((Hi, rM1, M2g, rT1, Bi)) in
+
+    if M3Chk = rM3 then
+
+    event GWNAcceptUser(rM1, rM3, rT1);
+    event Reach(reachGWNAcceptUser);
+
+    new N2: scalar;
+    new T2: bitstring;
+
+    let M4 = ecmult(N2, P) in
+    let M5 = ecmult(N2, rM1) in
+    let M6 = xor(M4, H(XSGj)) in
+    let M7 = xor(M4, M5) in
+    let M8s = H((tag1, XSGj, rM1, rM3, M4, M5, T2)) in
+
+    event GWNSendSensorFull(rM1, rM3, M6, M7, M8s, T2);
+    event Reach(reachGWNSendSensor);
+    out(pub, (rM1, rM3, M6, M7, M8s, T2));
+
+    in(pub, (
+        rRS: bitstring,
+        rM11: bitstring,
+        rT3: bitstring
+    ));
+
+    let M11Chk = H((tag2, XSGj, rM1, rM3, M4, M5, rRS, T2, rT3)) in
+
+    if M11Chk = rM11 then
+
+    event GWNAcceptSensorFull(rRS, rM11, rT3);
+    event Reach(reachGWNAcceptSensor);
+
+    new T4: bitstring;
+
+    let M12 = xor(M2g, M4) in
+    let M13s = H((tag3, M2g, rM3, M12, rRS, T2, rT3, T4)) in
+
+    event GWNSendUserFull(rRS, M12, M13s, T2, rT3, T4);
+    event Reach(reachGWNSendUser);
+
+    out(pub, (rRS, M12, M13s, T2, rT3, T4)).
+
+
+let SensorAuth(
+    XSGj: bitstring
+) =
+    in(pub, (
+        rM1: bitstring,
+        rM3: bitstring,
+        rM6: bitstring,
+        rM7: bitstring,
+        rM8: bitstring,
+        rT2: bitstring
+    ));
+
+    let M4s = xor_r(rM6, H(XSGj)) in
+    let M5s = xor_l(rM7, M4s) in
+    let M8Chk = H((tag1, XSGj, rM1, rM3, M4s, M5s, rT2)) in
+
+    if M8Chk = rM8 then
+
+    event SensorAcceptFull(rM1, rM3, rM6, rM7, rM8, rT2);
+    event Reach(reachSensorAccept);
+
+    new N3: scalar;
+    new T3: bitstring;
+
+    let RS = ecmult(N3, P) in
+    let ZUSs = ecmult(N3, rM1) in
+    let SKs = H((tagK, ZUSs, rM1, RS, rM3, M4s, rT2, T3)) in
+    let M11s = H((tag2, XSGj, rM1, rM3, M4s, M5s, RS, rT2, T3)) in
+
+    event SensorReply(RS, M11s, T3);
+    event Reach(reachSensorReply);
+
+    event SensorKey(SKs, RS, T3);
+    event Reach(reachSensorKey);
+
+    out(pub, (RS, M11s, T3));
+    out(pub, senc(SecretS, SKs)).
+
+
+process
+    let Ppub = ecmult(Ppr, P) in
+    out(pub, P);
+    out(pub, Ppub);
+
+    let XSGj = H((IDSj, a)) in
+
+    new b: bitstring;
+    let omega = FE(BIOUi) in
+    let theta = FEpub(BIOUi) in
+    out(pub, theta);
+
+    let HIDi = H((omega, IDUi, b)) in
+    let HPWi = H((b, PWUi, omega)) in
+    let Hi = H((s2b(Ppr), a)) in
+    let Bi = xor(H(HIDi), Hi) in
+    let Ei = H((HIDi, HPWi, omega)) in
+    let Fi = xor(b, H((IDUi, PWUi, omega))) in
+
+    (
+        !(UserAuth(Bi, Ei, Fi, Ppub))
+      | !(GWNAuth(Bi, XSGj))
+      | !(SensorAuth(XSGj))
+    )
